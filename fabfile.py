@@ -1,4 +1,6 @@
+import base64
 import crypt
+import os
 import random
 import string
 import sys
@@ -6,6 +8,10 @@ from os.path import expanduser
 
 from invoke import Responder, task
 from invocations.console import confirm
+
+
+def generate_secret_key(length=64):
+    return base64.b64encode(os.urandom(length))[:length]
 
 
 BLUE = "\033[0;34m"
@@ -162,7 +168,7 @@ def create_worker_user(c, user, server_name, project_name):
 
 def install_postgres(c):
     status("installing postgres")
-    c.run("apt-get install postgresql -qy")
+    c.run("apt-get install postgresql postgresql-contrib -qy")
 
     status("creating postgres superuser")
     c.sudo("createuser -s admin", user="postgres")
@@ -293,7 +299,20 @@ def phoenix_server(c):
     install_nginx(c)
     install_letsencrypt(c)
     create_phoenix_vhost(c, domain_name)
+    create_ssl_cert(c, domain_name, email)
     harden(c)
+
+
+def install_yarn(c):
+    status("installing Yarn")
+    # Add sources for a modern version of NodeJs
+    c.run("curl -sL https://deb.nodesource.com/setup_7.x | sudo -E bash -")
+    # Add sources for Yarn
+    c.run("curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | sudo apt-key add -")
+    c.run("echo 'deb https://dl.yarnpkg.com/debian/ stable main' | sudo tee /etc/apt/sources.list.d/yarn.list")
+    # Update and install
+    c.run("apt-get update")
+    c.run("apt-get install nodejs yarn -qy")
 
 
 def install_erlang_elixir(c, erlang_version, elixir_version, user):
@@ -329,17 +348,39 @@ def install_erlang_elixir(c, erlang_version, elixir_version, user):
     run_as(c, "mix local.rebar --force", user=user)
 
 
+def put_phoenix_secret_config(c, environment, project_name, db_user, db_pass):
+    run_as("mkdir -p ~/_config", user="builder")
+    secret_path = "/var/builder/_config/{env}.secret.exs".format(env=environment)
+    c.put("files/secret.exs", secret_path)
+    secret_key = generate_secret_key().replace("/", "\\/")
+    db_pass = db_pass.replace("/", "\\/")
+    c.run("sed -i 's/SECRET_KEY/{secret_key}/g' {path}".format(secret_key=secret_key, path=secret_path))
+    c.run("sed -i 's/Example/{project}/g' {path}".format(project=project_name.capitalize(), path=secret_path))
+    c.run("sed -i 's/example/{project}/g' {path}".format(project=project_name, path=secret_path))
+    c.run("sed -i 's/DB_USER/{db_user}/g' {path}".format(db_user=db_user, path=secret_path))
+    c.run("sed -i 's/DB_PASS/{db_pass}/g' {path}".format(db_pass=db_pass, path=secret_path))
+    c.run("chown -R builder: /var/builder/_config")
+
+
 def builder_server(c):
     project_name = prompt("Project name")
     server_name = prompt("Server name", default="%s-build" % project_name)
     erlang_version = prompt("Erlang version", default="19.3")
     elixir_version = prompt("Elixir version", default="1.4.4")
+    prod_db_user = prompt("Prod DB username (prod)", default=project_name)
+    prod_db_pass = prompt("Prod DB password (prod)", default=generate_secret_key(20))
+    stage_db_user = prompt("Stage DB username (stage)", default=project_name)
+    stage_db_pass = prompt("Stage DB password (stage)", default=generate_secret_key(20))
 
     authenticate(c)
     scaffolding(c, server_name)
     create_admin_user(c, server_name)
     create_worker_user(c, "builder", server_name, project_name)
+    install_yarn(c)
+    c.run("echo 'export PATH=\"./node_modules/.bin:$PATH\"' >> /var/builder/.profile")
     install_erlang_elixir(c, erlang_version, elixir_version, user="builder")
+    put_phoenix_secret_config(c, "prod", project_name, prod_db_user, prod_db_pass)
+    put_phoenix_secret_config(c, "stage", project_name, stage_db_user, stage_db_pass)
     harden(c)
 
 
