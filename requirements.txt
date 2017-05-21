@@ -1,0 +1,2 @@
+git+https://github.com/fabric/fabric@v2
+invocations==0.19
