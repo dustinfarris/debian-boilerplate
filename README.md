@@ -17,11 +17,19 @@ pip install -r requirements.txt
 
 ## Usage
 
+Basic server:
+
+```
+fab -H "root@11.22.33.44" create
+```
+
+
 Phoenix server:
 
 ```
 fab -H 11.22.33.44 create_phoenix
 ```
+
 
 Builder server:
 

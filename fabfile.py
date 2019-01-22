@@ -3,11 +3,10 @@ import crypt
 import os
 import random
 import string
-import sys
+from getpass import getpass
 from os.path import expanduser
 
 from invoke import Responder, task
-from invocations.console import confirm
 
 
 def generate_secret_key(length=64):
@@ -17,6 +16,7 @@ def generate_secret_key(length=64):
 BLUE = "\033[0;34m"
 RESET = "\033[0m"
 GRAY = "\033[0;37m"
+
 
 def status(message):
     print("\n\n%s%s%s...%s\n" % (BLUE, message, GRAY, RESET))
@@ -50,8 +50,11 @@ def prompt(text, default=None):
 
 
 def authenticate(c):
-    password = input("Root password: ")
-    c.connect_kwargs.update({"password": password})
+    password = getpass("Root password: ")
+    c.connect_kwargs.update({
+        "password": password,
+        "look_for_keys": False,
+    })
 
 
 def scaffolding(c, server_name):
@@ -384,6 +387,15 @@ def builder_server(c):
     harden(c)
 
 
+def basic_server(c):
+    server_name = prompt("Server name")
+
+    authenticate(c)
+    scaffolding(c, server_name)
+    create_admin_user(c, server_name)
+    harden(c)
+
+
 def build(c, flavor):
     try:
         flavor(c)
@@ -405,3 +417,8 @@ def create_phoenix(c):
 @task
 def create_builder(c):
     build(c, builder_server)
+
+
+@task
+def create(c):
+    build(c, basic_server)
